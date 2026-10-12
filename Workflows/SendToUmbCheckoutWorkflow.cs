@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using UmbCheckout.Core.Interfaces;
 using UmbCheckout.Shared.Models;
@@ -15,13 +15,15 @@ namespace UmbCheckout.Stripe.Forms.Workflows
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IBasketService _basketService;
         private readonly IStripeSessionService _sessionService;
+        private readonly IStripeBasketPricingService _basketPricingService;
 
-        public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService)
+        public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService, IStripeBasketPricingService basketPricingService)
         {
             _logger = logger;
             _httpContextAccessor = httpContextAccessor;
             _basketService = basketService;
             _sessionService = sessionService;
+            _basketPricingService = basketPricingService;
             this.Id = new Guid("c7371d3b-c6a6-4fc9-8a0c-7552932c13cb");
             this.Name = "Send form to UmbCheckout for payment";
             this.Description = "Sends the form to UmbCheckout, for payment to be carried out";
@@ -59,7 +61,9 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                         };
                     }
                 }
-                var stripeSession = _sessionService.CreateSessionAsync(basket).Result;
+                // No basket page to return to here: Stripe's page shows the final amount.
+                var repriced = _basketPricingService.RepriceAsync(basket).GetAwaiter().GetResult().Basket;
+                var stripeSession = _sessionService.CreateSessionAsync(repriced).Result;
                 if (_httpContextAccessor.HttpContext != null)
                     _httpContextAccessor.HttpContext.Items[Constants.ItemKeys.RedirectAfterFormSubmitUrl] =
                         stripeSession.Url;
