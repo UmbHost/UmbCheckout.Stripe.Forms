@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using UmbCheckout.Shared.Notifications;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using UmbCheckout.Core.Interfaces;
 using UmbCheckout.Shared.Models;
@@ -46,7 +47,13 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                     throw new Exception("Umbraco Context is missing... Why?");
                 }
 
-                var basket = _basketService.Get().Result;
+                // Checkout charges the stored basket: a site's Loaded hooks shape what shoppers see, never what is charged.
+                Basket basket;
+                using (UmbCheckoutHooks.SuppressLoaded())
+                {
+                    basket = await _basketService.Get();
+                }
+
                 basket.CustomerReferenceId = $"{context.Form.Id}@{context.Record.UniqueId}";
 
                 var emailAddress = context.Record.GetRecordFieldByAlias(EmailAlias);
@@ -62,8 +69,8 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                     }
                 }
                 // No basket page to return to here: Stripe's page shows the final amount.
-                var repriced = _basketPricingService.RepriceAsync(basket).GetAwaiter().GetResult().Basket;
-                var stripeSession = _sessionService.CreateSessionAsync(repriced).Result;
+                var repriced = (await _basketPricingService.RepriceAsync(basket)).Basket;
+                var stripeSession = await _sessionService.CreateSessionAsync(repriced);
                 if (_httpContextAccessor.HttpContext != null)
                     _httpContextAccessor.HttpContext.Items[Constants.ItemKeys.RedirectAfterFormSubmitUrl] =
                         stripeSession.Url;
