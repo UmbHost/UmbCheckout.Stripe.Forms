@@ -18,21 +18,29 @@ namespace UmbCheckout.Stripe.Forms.Workflows
         private readonly IBasketService _basketService;
         private readonly IStripeSessionService _sessionService;
         private readonly IStripeBasketPricingService _basketPricingService;
+        private readonly ISessionService _umbCheckoutSessionService;
 
-        [Obsolete("Use the constructor that takes an IStripeBasketPricingService. This one resolves it from the application's services.")]
+        [Obsolete("Use the constructor that takes an IStripeBasketPricingService and an ISessionService. This one resolves them from the application's services.")]
         public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService)
-            : this(logger, httpContextAccessor, basketService, sessionService, StaticServiceProvider.Instance.GetRequiredService<IStripeBasketPricingService>())
+            : this(logger, httpContextAccessor, basketService, sessionService, StaticServiceProvider.Instance.GetRequiredService<IStripeBasketPricingService>(), StaticServiceProvider.Instance.GetRequiredService<ISessionService>())
+        {
+        }
+
+        [Obsolete("Use the constructor that also takes an ISessionService. This one resolves it from the application's services.")]
+        public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService, IStripeBasketPricingService basketPricingService)
+            : this(logger, httpContextAccessor, basketService, sessionService, basketPricingService, StaticServiceProvider.Instance.GetRequiredService<ISessionService>())
         {
         }
 
         [ActivatorUtilitiesConstructor]
-        public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService, IStripeBasketPricingService basketPricingService)
+        public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService, IStripeBasketPricingService basketPricingService, ISessionService umbCheckoutSessionService)
         {
             _logger = logger;
             _httpContextAccessor = httpContextAccessor;
             _basketService = basketService;
             _sessionService = sessionService;
             _basketPricingService = basketPricingService;
+            _umbCheckoutSessionService = umbCheckoutSessionService;
             this.Id = new Guid("c7371d3b-c6a6-4fc9-8a0c-7552932c13cb");
             this.Name = "Send form to UmbCheckout for payment";
             this.Description = "Sends the form to UmbCheckout, for payment to be carried out";
@@ -56,7 +64,7 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                     throw new Exception("Umbraco Context is missing... Why?");
                 }
 
-                var basket = _basketService.Get().Result;
+                var basket = await _basketService.Get();
                 basket.CustomerReferenceId = $"{context.Form.Id}@{context.Record.UniqueId}";
 
                 var emailAddress = context.Record.GetRecordFieldByAlias(EmailAlias);
@@ -79,7 +87,12 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                     return WorkflowExecutionStatus.Failed;
                 }
 
-                var stripeSession = _sessionService.CreateSessionAsync(repriced).Result;
+                var stripeSession = await _sessionService.CreateSessionAsync(repriced);
+
+                // As StripeBasketController.Checkout: the success page clears this basket only when it records this checkout session.
+                repriced.CheckoutSessionId = stripeSession.Id;
+                await _umbCheckoutSessionService.Update(repriced);
+
                 if (_httpContextAccessor.HttpContext != null)
                     _httpContextAccessor.HttpContext.Items[Constants.ItemKeys.RedirectAfterFormSubmitUrl] =
                         stripeSession.Url;
@@ -126,7 +139,12 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                     return WorkflowExecutionStatus.Failed;
                 }
 
-                var stripeSession = _sessionService.CreateSessionAsync(repriced).Result;
+                var stripeSession = _sessionService.CreateSessionAsync(repriced).GetAwaiter().GetResult();
+
+                // As StripeBasketController.Checkout: the success page clears this basket only when it records this checkout session.
+                repriced.CheckoutSessionId = stripeSession.Id;
+                _umbCheckoutSessionService.Update(repriced).GetAwaiter().GetResult();
+
                 if (_httpContextAccessor.HttpContext != null)
                     _httpContextAccessor.HttpContext.Items[Constants.ItemKeys.RedirectAfterFormSubmitUrl] =
                         stripeSession.Url;
