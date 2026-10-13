@@ -20,13 +20,13 @@ namespace UmbCheckout.Stripe.Forms.Workflows
         private readonly IStripeBasketPricingService _basketPricingService;
         private readonly ISessionService _umbCheckoutSessionService;
 
-        [Obsolete("Use the constructor that takes an IStripeBasketPricingService and an ISessionService. This one resolves them from the application's services.")]
+        [Obsolete("Use the constructor that takes an IStripeBasketPricingService and an ISessionService. Scheduled for removal in 17.1.")]
         public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService)
             : this(logger, httpContextAccessor, basketService, sessionService, StaticServiceProvider.Instance.GetRequiredService<IStripeBasketPricingService>(), StaticServiceProvider.Instance.GetRequiredService<ISessionService>())
         {
         }
 
-        [Obsolete("Use the constructor that also takes an ISessionService. This one resolves it from the application's services.")]
+        [Obsolete("Use the constructor that also takes an ISessionService. Scheduled for removal in 17.1.")]
         public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService, IStripeBasketPricingService basketPricingService)
             : this(logger, httpContextAccessor, basketService, sessionService, basketPricingService, StaticServiceProvider.Instance.GetRequiredService<ISessionService>())
         {
@@ -59,9 +59,7 @@ namespace UmbCheckout.Stripe.Forms.Workflows
             {
                 if (context == null)
                 {
-                    _logger.LogInformation("WorkflowExecutionContext Context is null");
-                    _logger.LogCritical("WorkflowExecutionContext Context is null");
-                    throw new Exception("Umbraco Context is missing... Why?");
+                    throw new InvalidOperationException("Umbraco Forms ran the workflow without a workflow execution context");
                 }
 
                 // Umbraco Forms gives the workflow no token: the request's.
@@ -103,7 +101,7 @@ namespace UmbCheckout.Stripe.Forms.Workflows
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, "Sending the form to checkout failed");
+                _logger.LogError(ex, "Sending form {FormId} entry {RecordId} to Stripe checkout failed", context?.Form.Id, context?.Record.UniqueId);
                 return WorkflowExecutionStatus.Failed;
             }
         }
@@ -114,9 +112,7 @@ namespace UmbCheckout.Stripe.Forms.Workflows
             {
                 if (context == null)
                 {
-                    _logger.LogInformation("WorkflowExecutionContext Context is null");
-                    _logger.LogCritical("WorkflowExecutionContext Context is null");
-                    throw new Exception("Umbraco Context is missing... Why?");
+                    throw new InvalidOperationException("Umbraco Forms ran the workflow without a workflow execution context");
                 }
 
                 // Umbraco Forms 10 has only this synchronous entry point, so the calls are waited for here. Forms gives no token: the request's.
@@ -158,7 +154,7 @@ namespace UmbCheckout.Stripe.Forms.Workflows
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, "Sending the form to checkout failed");
+                _logger.LogError(ex, "Sending form {FormId} entry {RecordId} to Stripe checkout failed", context?.Form.Id, context?.Record.UniqueId);
                 return WorkflowExecutionStatus.Failed;
             }
         }
