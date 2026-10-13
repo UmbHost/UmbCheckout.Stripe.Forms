@@ -21,7 +21,7 @@ namespace UmbCheckout.Stripe.Forms.Workflows
         private readonly IStripeBasketPricingService _basketPricingService;
         private readonly ISessionService _umbCheckoutSessionService;
 
-        [Obsolete("Use the constructor that takes an ISessionService. Scheduled for removal in the next major version.")]
+        [Obsolete("Use the constructor that takes an ISessionService. Scheduled for removal in 17.1.")]
         public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService, IStripeBasketPricingService basketPricingService)
             : this(logger, httpContextAccessor, basketService, sessionService, basketPricingService, StaticServiceProvider.Instance.GetRequiredService<ISessionService>())
         {
@@ -90,7 +90,8 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                 repriced.CheckoutSessionId = stripeSession.Id;
                 using (UmbCheckoutHooks.SuppressSaving())
                 {
-                    await _umbCheckoutSessionService.Update(repriced, cancellationToken);
+                    // Not cancelled with the request: once Stripe has the session it is recorded even if the customer has left meanwhile.
+                    await _umbCheckoutSessionService.Update(repriced, CancellationToken.None);
                 }
 
                 if (_httpContextAccessor.HttpContext != null)
