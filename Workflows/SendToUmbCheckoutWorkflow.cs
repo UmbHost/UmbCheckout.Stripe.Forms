@@ -1,8 +1,10 @@
 ﻿using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using UmbCheckout.Core.Interfaces;
 using UmbCheckout.Shared.Models;
 using UmbCheckout.Stripe.Interfaces;
+using Umbraco.Cms.Web.Common.DependencyInjection;
 using Umbraco.Forms.Core;
 using Umbraco.Forms.Core.Attributes;
 using Umbraco.Forms.Core.Enums;
@@ -15,13 +17,22 @@ namespace UmbCheckout.Stripe.Forms.Workflows
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IBasketService _basketService;
         private readonly IStripeSessionService _sessionService;
+        private readonly IStripeBasketPricingService _basketPricingService;
 
+        [Obsolete("Use the constructor that takes an IStripeBasketPricingService. This one resolves it from the application's services.")]
         public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService)
+            : this(logger, httpContextAccessor, basketService, sessionService, StaticServiceProvider.Instance.GetRequiredService<IStripeBasketPricingService>())
+        {
+        }
+
+        [ActivatorUtilitiesConstructor]
+        public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService, IStripeBasketPricingService basketPricingService)
         {
             _logger = logger;
             _httpContextAccessor = httpContextAccessor;
             _basketService = basketService;
             _sessionService = sessionService;
+            _basketPricingService = basketPricingService;
             this.Id = new Guid("c7371d3b-c6a6-4fc9-8a0c-7552932c13cb");
             this.Name = "Send form to UmbCheckout for payment";
             this.Description = "Sends the form to UmbCheckout, for payment to be carried out";
@@ -34,9 +45,7 @@ namespace UmbCheckout.Stripe.Forms.Workflows
         public string EmailAlias { get; set; } = "emailAddress";
 
 #if NET8_0_OR_GREATER
-#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
         public override async Task<WorkflowExecutionStatus> ExecuteAsync(WorkflowExecutionContext context)
-#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
         {
             try
             {
@@ -62,7 +71,15 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                         };
                     }
                 }
-                var stripeSession = _sessionService.CreateSessionAsync(basket).Result;
+                // Checkout charges current published prices. There is no basket page to return to here: Stripe's page shows the final amount.
+                var repriced = (await _basketPricingService.RepriceAsync(basket)).Basket;
+                if (!repriced.LineItems.Any())
+                {
+                    _logger.LogWarning("Form {FormId} was not sent to checkout: no product in the basket is still for sale", context.Form.Id);
+                    return WorkflowExecutionStatus.Failed;
+                }
+
+                var stripeSession = _sessionService.CreateSessionAsync(repriced).Result;
                 if (_httpContextAccessor.HttpContext != null)
                     _httpContextAccessor.HttpContext.Items[Constants.ItemKeys.RedirectAfterFormSubmitUrl] =
                         stripeSession.Url;
@@ -70,7 +87,7 @@ namespace UmbCheckout.Stripe.Forms.Workflows
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, ex.Message);
+                _logger.LogCritical(ex, "Sending the form to checkout failed");
                 return WorkflowExecutionStatus.Failed;
             }
         }
@@ -101,7 +118,15 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                         };
                     }
                 }
-                var stripeSession = _sessionService.CreateSessionAsync(basket).Result;
+                // Checkout charges current published prices. There is no basket page to return to here: Stripe's page shows the final amount.
+                var repriced = _basketPricingService.RepriceAsync(basket).GetAwaiter().GetResult().Basket;
+                if (!repriced.LineItems.Any())
+                {
+                    _logger.LogWarning("Form {FormId} was not sent to checkout: no product in the basket is still for sale", context.Form.Id);
+                    return WorkflowExecutionStatus.Failed;
+                }
+
+                var stripeSession = _sessionService.CreateSessionAsync(repriced).Result;
                 if (_httpContextAccessor.HttpContext != null)
                     _httpContextAccessor.HttpContext.Items[Constants.ItemKeys.RedirectAfterFormSubmitUrl] =
                         stripeSession.Url;
@@ -109,7 +134,7 @@ namespace UmbCheckout.Stripe.Forms.Workflows
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, ex.Message);
+                _logger.LogCritical(ex, "Sending the form to checkout failed");
                 return WorkflowExecutionStatus.Failed;
             }
         }
