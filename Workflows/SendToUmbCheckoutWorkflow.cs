@@ -1,6 +1,8 @@
 ﻿using UmbCheckout.Shared.Notifications;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Umbraco.Cms.Core.DependencyInjection;
 using UmbCheckout.Core.Interfaces;
 using UmbCheckout.Shared.Models;
 using UmbCheckout.Stripe.Interfaces;
@@ -17,14 +19,23 @@ namespace UmbCheckout.Stripe.Forms.Workflows
         private readonly IBasketService _basketService;
         private readonly IStripeSessionService _sessionService;
         private readonly IStripeBasketPricingService _basketPricingService;
+        private readonly ISessionService _umbCheckoutSessionService;
 
+        [Obsolete("Use the constructor that takes an ISessionService. Scheduled for removal in the next major version.")]
         public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService, IStripeBasketPricingService basketPricingService)
+            : this(logger, httpContextAccessor, basketService, sessionService, basketPricingService, StaticServiceProvider.Instance.GetRequiredService<ISessionService>())
+        {
+        }
+
+        [ActivatorUtilitiesConstructor]
+        public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService, IStripeBasketPricingService basketPricingService, ISessionService umbCheckoutSessionService)
         {
             _logger = logger;
             _httpContextAccessor = httpContextAccessor;
             _basketService = basketService;
             _sessionService = sessionService;
             _basketPricingService = basketPricingService;
+            _umbCheckoutSessionService = umbCheckoutSessionService;
             this.Id = new Guid("c7371d3b-c6a6-4fc9-8a0c-7552932c13cb");
             this.Name = "Send form to UmbCheckout for payment";
             this.Description = "Sends the form to UmbCheckout, for payment to be carried out";
@@ -72,6 +83,16 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                 // No basket page to return to here: Stripe's page shows the final amount.
                 var repriced = (await _basketPricingService.RepriceAsync(basket, cancellationToken)).Basket;
                 var stripeSession = await _sessionService.CreateSessionAsync(repriced, cancellationToken);
+
+                // As StripeBasketController.Checkout: the success page and the webhook clear this basket only when it
+                // records this checkout session. Bookkeeping, not a shopper's change, so a site's Saving handlers
+                // can't refuse it (or the paid basket would never clear).
+                repriced.CheckoutSessionId = stripeSession.Id;
+                using (UmbCheckoutHooks.SuppressSaving())
+                {
+                    await _umbCheckoutSessionService.Update(repriced, cancellationToken);
+                }
+
                 if (_httpContextAccessor.HttpContext != null)
                     _httpContextAccessor.HttpContext.Items[Constants.ItemKeys.RedirectAfterFormSubmitUrl] =
                         stripeSession.Url;
