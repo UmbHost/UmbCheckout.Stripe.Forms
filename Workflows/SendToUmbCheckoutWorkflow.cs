@@ -45,11 +45,14 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                     throw new InvalidOperationException("Umbraco Forms ran the workflow without a workflow execution context");
                 }
 
+                // Umbraco Forms passes no token: the submitting request's stops the work when the visitor leaves.
+                var cancellationToken = _httpContextAccessor.HttpContext?.RequestAborted ?? CancellationToken.None;
+
                 // Checkout charges the stored basket: a site's Loaded hooks shape what shoppers see, never what is charged.
                 Basket basket;
                 using (UmbCheckoutHooks.SuppressLoaded())
                 {
-                    basket = await _basketService.Get();
+                    basket = await _basketService.Get(cancellationToken);
                 }
 
                 basket.CustomerReferenceId = $"{context.Form.Id}@{context.Record.UniqueId}";
@@ -67,8 +70,8 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                     }
                 }
                 // No basket page to return to here: Stripe's page shows the final amount.
-                var repriced = (await _basketPricingService.RepriceAsync(basket)).Basket;
-                var stripeSession = await _sessionService.CreateSessionAsync(repriced);
+                var repriced = (await _basketPricingService.RepriceAsync(basket, cancellationToken)).Basket;
+                var stripeSession = await _sessionService.CreateSessionAsync(repriced, cancellationToken);
                 if (_httpContextAccessor.HttpContext != null)
                     _httpContextAccessor.HttpContext.Items[Constants.ItemKeys.RedirectAfterFormSubmitUrl] =
                         stripeSession.Url;
