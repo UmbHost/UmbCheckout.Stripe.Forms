@@ -90,7 +90,8 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                 repriced.CheckoutSessionId = stripeSession.Id;
                 using (UmbCheckoutHooks.SuppressSaving())
                 {
-                    await _umbCheckoutSessionService.Update(repriced, cancellationToken);
+                    // Not cancelled with the request: once Stripe has the session it is recorded even if the customer has left meanwhile.
+                    await _umbCheckoutSessionService.Update(repriced, CancellationToken.None);
                 }
 
                 if (_httpContextAccessor.HttpContext != null)
