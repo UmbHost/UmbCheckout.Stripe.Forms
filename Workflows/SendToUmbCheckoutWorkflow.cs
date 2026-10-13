@@ -42,9 +42,7 @@ namespace UmbCheckout.Stripe.Forms.Workflows
             {
                 if (context == null)
                 {
-                    _logger.LogInformation("WorkflowExecutionContext Context is null");
-                    _logger.LogCritical("WorkflowExecutionContext Context is null");
-                    throw new Exception("Umbraco Context is missing... Why?");
+                    throw new InvalidOperationException("Umbraco Forms ran the workflow without a workflow execution context");
                 }
 
                 // Checkout charges the stored basket: a site's Loaded hooks shape what shoppers see, never what is charged.
@@ -78,7 +76,7 @@ namespace UmbCheckout.Stripe.Forms.Workflows
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, ex.Message);
+                _logger.LogError(ex, "Sending form {FormId} entry {RecordId} to Stripe checkout failed", context?.Form.Id, context?.Record.UniqueId);
                 return WorkflowExecutionStatus.Failed;
             }
         }
