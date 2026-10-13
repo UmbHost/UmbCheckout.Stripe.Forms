@@ -64,7 +64,9 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                     throw new Exception("Umbraco Context is missing... Why?");
                 }
 
-                var basket = await _basketService.Get();
+                // Umbraco Forms gives the workflow no token: the request's.
+                var cancellationToken = _httpContextAccessor.HttpContext?.RequestAborted ?? CancellationToken.None;
+                var basket = await _basketService.Get(cancellationToken);
                 basket.CustomerReferenceId = $"{context.Form.Id}@{context.Record.UniqueId}";
 
                 var emailAddress = context.Record.GetRecordFieldByAlias(EmailAlias);
@@ -80,18 +82,19 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                     }
                 }
                 // Checkout charges current published prices. There is no basket page to return to here: Stripe's page shows the final amount.
-                var repriced = (await _basketPricingService.RepriceAsync(basket)).Basket;
+                var repriced = (await _basketPricingService.RepriceAsync(basket, cancellationToken)).Basket;
                 if (!repriced.LineItems.Any())
                 {
                     _logger.LogWarning("Form {FormId} was not sent to checkout: no product in the basket is still for sale", context.Form.Id);
                     return WorkflowExecutionStatus.Failed;
                 }
 
-                var stripeSession = await _sessionService.CreateSessionAsync(repriced);
+                var stripeSession = await _sessionService.CreateSessionAsync(repriced, cancellationToken);
 
-                // As StripeBasketController.Checkout: the success page clears this basket only when it records this checkout session.
+                // As StripeBasketController.Checkout: the success page clears this basket only when it records this checkout session,
+                // which is recorded even if the customer has left meanwhile.
                 repriced.CheckoutSessionId = stripeSession.Id;
-                await _umbCheckoutSessionService.Update(repriced);
+                await _umbCheckoutSessionService.Update(repriced, CancellationToken.None);
 
                 if (_httpContextAccessor.HttpContext != null)
                     _httpContextAccessor.HttpContext.Items[Constants.ItemKeys.RedirectAfterFormSubmitUrl] =
@@ -116,7 +119,9 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                     throw new Exception("Umbraco Context is missing... Why?");
                 }
 
-                var basket = _basketService.Get().Result;
+                // Umbraco Forms 10 has only this synchronous entry point, so the calls are waited for here. Forms gives no token: the request's.
+                var cancellationToken = _httpContextAccessor.HttpContext?.RequestAborted ?? CancellationToken.None;
+                var basket = _basketService.Get(cancellationToken).GetAwaiter().GetResult();
                 basket.CustomerReferenceId = $"{context.Form.Id}@{context.Record.UniqueId}";
 
                 var emailAddress = context.Record.GetRecordFieldByAlias(EmailAlias);
@@ -132,18 +137,19 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                     }
                 }
                 // Checkout charges current published prices. There is no basket page to return to here: Stripe's page shows the final amount.
-                var repriced = _basketPricingService.RepriceAsync(basket).GetAwaiter().GetResult().Basket;
+                var repriced = _basketPricingService.RepriceAsync(basket, cancellationToken).GetAwaiter().GetResult().Basket;
                 if (!repriced.LineItems.Any())
                 {
                     _logger.LogWarning("Form {FormId} was not sent to checkout: no product in the basket is still for sale", context.Form.Id);
                     return WorkflowExecutionStatus.Failed;
                 }
 
-                var stripeSession = _sessionService.CreateSessionAsync(repriced).GetAwaiter().GetResult();
+                var stripeSession = _sessionService.CreateSessionAsync(repriced, cancellationToken).GetAwaiter().GetResult();
 
-                // As StripeBasketController.Checkout: the success page clears this basket only when it records this checkout session.
+                // As StripeBasketController.Checkout: the success page clears this basket only when it records this checkout session,
+                // which is recorded even if the customer has left meanwhile.
                 repriced.CheckoutSessionId = stripeSession.Id;
-                _umbCheckoutSessionService.Update(repriced).GetAwaiter().GetResult();
+                _umbCheckoutSessionService.Update(repriced, CancellationToken.None).GetAwaiter().GetResult();
 
                 if (_httpContextAccessor.HttpContext != null)
                     _httpContextAccessor.HttpContext.Items[Constants.ItemKeys.RedirectAfterFormSubmitUrl] =
