@@ -1,5 +1,8 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using UmbCheckout.Shared.Notifications;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Umbraco.Cms.Core.DependencyInjection;
 using UmbCheckout.Core.Interfaces;
 using UmbCheckout.Shared.Models;
 using UmbCheckout.Stripe.Interfaces;
@@ -15,13 +18,24 @@ namespace UmbCheckout.Stripe.Forms.Workflows
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IBasketService _basketService;
         private readonly IStripeSessionService _sessionService;
+        private readonly IStripeBasketPricingService _basketPricingService;
+        private readonly ISessionService _umbCheckoutSessionService;
 
-        public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService)
+        [Obsolete("Use the constructor that takes an ISessionService. Scheduled for removal in 17.1.")]
+        public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService, IStripeBasketPricingService basketPricingService)
+            : this(logger, httpContextAccessor, basketService, sessionService, basketPricingService, StaticServiceProvider.Instance.GetRequiredService<ISessionService>())
+        {
+        }
+
+        [ActivatorUtilitiesConstructor]
+        public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService, IStripeBasketPricingService basketPricingService, ISessionService umbCheckoutSessionService)
         {
             _logger = logger;
             _httpContextAccessor = httpContextAccessor;
             _basketService = basketService;
             _sessionService = sessionService;
+            _basketPricingService = basketPricingService;
+            _umbCheckoutSessionService = umbCheckoutSessionService;
             this.Id = new Guid("c7371d3b-c6a6-4fc9-8a0c-7552932c13cb");
             this.Name = "Send form to UmbCheckout for payment";
             this.Description = "Sends the form to UmbCheckout, for payment to be carried out";
@@ -33,21 +47,25 @@ namespace UmbCheckout.Stripe.Forms.Workflows
         [Setting("Email alias", Description = "The alias of the field used to capture the email address", DisplayOrder = 70, View = "TextField")]
         public string EmailAlias { get; set; } = "emailAddress";
 
-#if NET8_0_OR_GREATER
-#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
         public override async Task<WorkflowExecutionStatus> ExecuteAsync(WorkflowExecutionContext context)
-#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
         {
             try
             {
                 if (context == null)
                 {
-                    _logger.LogInformation("WorkflowExecutionContext Context is null");
-                    _logger.LogCritical("WorkflowExecutionContext Context is null");
-                    throw new Exception("Umbraco Context is missing... Why?");
+                    throw new InvalidOperationException("Umbraco Forms ran the workflow without a workflow execution context");
                 }
 
-                var basket = _basketService.Get().Result;
+                // Umbraco Forms passes no token: the submitting request's stops the work when the visitor leaves.
+                var cancellationToken = _httpContextAccessor.HttpContext?.RequestAborted ?? CancellationToken.None;
+
+                // Checkout charges the stored basket: a site's Loaded hooks shape what shoppers see, never what is charged.
+                Basket basket;
+                using (UmbCheckoutHooks.SuppressLoaded())
+                {
+                    basket = await _basketService.Get(cancellationToken);
+                }
+
                 basket.CustomerReferenceId = $"{context.Form.Id}@{context.Record.UniqueId}";
 
                 var emailAddress = context.Record.GetRecordFieldByAlias(EmailAlias);
@@ -62,7 +80,20 @@ namespace UmbCheckout.Stripe.Forms.Workflows
                         };
                     }
                 }
-                var stripeSession = _sessionService.CreateSessionAsync(basket).Result;
+                // No basket page to return to here: Stripe's page shows the final amount.
+                var repriced = (await _basketPricingService.RepriceAsync(basket, cancellationToken)).Basket;
+                var stripeSession = await _sessionService.CreateSessionAsync(repriced, cancellationToken);
+
+                // As StripeBasketController.Checkout: the success page and the webhook clear this basket only when it
+                // records this checkout session. Bookkeeping, not a shopper's change, so a site's Saving handlers
+                // can't refuse it (or the paid basket would never clear).
+                repriced.CheckoutSessionId = stripeSession.Id;
+                using (UmbCheckoutHooks.SuppressSaving())
+                {
+                    // Not cancelled with the request: once Stripe has the session it is recorded even if the customer has left meanwhile.
+                    await _umbCheckoutSessionService.Update(repriced, CancellationToken.None);
+                }
+
                 if (_httpContextAccessor.HttpContext != null)
                     _httpContextAccessor.HttpContext.Items[Constants.ItemKeys.RedirectAfterFormSubmitUrl] =
                         stripeSession.Url;
@@ -70,50 +101,10 @@ namespace UmbCheckout.Stripe.Forms.Workflows
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, ex.Message);
+                _logger.LogError(ex, "Sending form {FormId} entry {RecordId} to Stripe checkout failed", context?.Form.Id, context?.Record.UniqueId);
                 return WorkflowExecutionStatus.Failed;
             }
         }
-#else
-        public override WorkflowExecutionStatus Execute(WorkflowExecutionContext context)
-        {
-            try
-            {
-                if (context == null)
-                {
-                    _logger.LogInformation("WorkflowExecutionContext Context is null");
-                    _logger.LogCritical("WorkflowExecutionContext Context is null");
-                    throw new Exception("Umbraco Context is missing... Why?");
-                }
-
-                var basket = _basketService.Get().Result;
-                basket.CustomerReferenceId = $"{context.Form.Id}@{context.Record.UniqueId}";
-
-                var emailAddress = context.Record.GetRecordFieldByAlias(EmailAlias);
-                if (emailAddress != null && emailAddress.HasValue())
-                {
-                    var emailValue = context.Record.GetRecordFieldByAlias(EmailAlias)?.ValuesAsString();
-                    if (!string.IsNullOrEmpty(emailValue))
-                    {
-                        basket.Customer = new Customer
-                        {
-                            EmailAddress = emailValue
-                        };
-                    }
-                }
-                var stripeSession = _sessionService.CreateSessionAsync(basket).Result;
-                if (_httpContextAccessor.HttpContext != null)
-                    _httpContextAccessor.HttpContext.Items[Constants.ItemKeys.RedirectAfterFormSubmitUrl] =
-                        stripeSession.Url;
-                return WorkflowExecutionStatus.Completed;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogCritical(ex, ex.Message);
-                return WorkflowExecutionStatus.Failed;
-            }
-        }
-#endif
 
         public override List<Exception> ValidateSettings()
         {
