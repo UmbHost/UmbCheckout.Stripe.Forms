@@ -20,13 +20,13 @@ namespace UmbCheckout.Stripe.Forms.Workflows
         private readonly IStripeBasketPricingService _basketPricingService;
         private readonly ISessionService _umbCheckoutSessionService;
 
-        [Obsolete("Use the constructor that takes an IStripeBasketPricingService and an ISessionService. Scheduled for removal in 17.1.")]
+        [Obsolete("Use the constructor that takes an IStripeBasketPricingService and an ISessionService. Scheduled for removal in 17.3.")]
         public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService)
             : this(logger, httpContextAccessor, basketService, sessionService, StaticServiceProvider.Instance.GetRequiredService<IStripeBasketPricingService>(), StaticServiceProvider.Instance.GetRequiredService<ISessionService>())
         {
         }
 
-        [Obsolete("Use the constructor that also takes an ISessionService. Scheduled for removal in 17.1.")]
+        [Obsolete("Use the constructor that also takes an ISessionService. Scheduled for removal in 17.3.")]
         public SendToUmbCheckoutWorkflow(ILogger<SendToUmbCheckoutWorkflow> logger, IHttpContextAccessor httpContextAccessor, IBasketService basketService, IStripeSessionService sessionService, IStripeBasketPricingService basketPricingService)
             : this(logger, httpContextAccessor, basketService, sessionService, basketPricingService, StaticServiceProvider.Instance.GetRequiredService<ISessionService>())
         {
